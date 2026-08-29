@@ -1,0 +1,339 @@
+/*
+ * Copyright (c) 2026 [cloudcodes434]
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+void _p_str(const char *s, int len) {
+        if (len <= 0 || !s)
+                return;
+        __asm__ volatile("movq  $1, %%rax\n\t"
+                         "movq  $1, %%rdi\n\t"
+                         "syscall\n\t"
+                         :
+                         : "S"(s), "d"((long)len)
+                         : "rax", "rdi", "rcx", "r11", "memory");
+}
+
+void _p_int(int val) {
+        char buf[20];
+        char *p = &buf[19];
+        *p = '\n';
+
+        if (val == 0) {
+                *--p = '0';
+        } else {
+                do {
+                        *--p = (char)((val % 10) + '0');
+                        val /= 10;
+                } while (val > 0);
+
+                if (p >= buf && p <= &buf[20]) {
+                        int len = (int)(&buf[20] - p);
+                        _p_str(p, len);
+                } else {
+                        _p_str("[ERR: Buffer out of bounds]\n", 28);
+                }
+        }
+}
+
+void _p_int_raw(int val) {
+        char buf[20];
+        char *p = &buf[19];
+
+        if (val == 0) {
+                *--p = '0';
+        }
+        do {
+                *--p = (char)((val % 10) + '0');
+                val /= 10;
+        } while (val > 0);
+        if (p >= buf && p <= &buf[20]) {
+                int len = (int)(&buf[20] - p);
+                _p_str(p, len);
+        } else {
+                _p_str("ERR: Bufffer out of bounds]\n", 28);
+        }
+}
+
+// TODO add Isatty:
+//  1. Check if the terminal exist and if it doens't return exit(1);	[ ]
+
+void clear_terminal(void) {
+        const char ANSI_game_start[] =
+            "\x1B[?25l" // Hides cursor
+            "\033[s"    // Save the cursor position
+            "\033[2J"   // Clear the screen
+            "\033[H";   // Move cursor to top-left corner (home)
+        unsigned long ANSI_s = sizeof(ANSI_game_start) - 1;
+
+        __asm__ volatile("movq $1, %%rax\n\t"
+                         "movq $1, %%rdi\n\t"
+                         "syscall\n\t"
+                         :
+                         : "S"(ANSI_game_start), "d"(ANSI_s)
+                         : "rax", "rdi", "rcx", "r11", "memory");
+}
+
+void restore_terminal(void) {
+        const char ANSI_game_over[] =
+            "\033[?25h" // Restore the cursor
+            "\033[2J"   // Clear the game screen one last time
+            "\033[u";   // Reset the cursor to the top-left
+
+        __asm__ volatile("movq $1, %%rax\n\t" // sys_write
+                         "movq $1, %%rdi\n\t"
+                         "syscall\n\t"
+                         :
+                         : "S"(ANSI_game_over), "d"(sizeof(ANSI_game_over) - 1)
+                         : "rax", "rdi", "r11", "memory");
+}
+
+void nano_sleep(unsigned long milliseconds) {
+        typedef struct {
+                long tv_sec;
+                long tv_nsec;
+        } timespec_t;
+        timespec_t req;
+
+        req.tv_sec = milliseconds / 1000;
+        req.tv_nsec = (milliseconds % 1000) * 1000000;
+
+        __asm__ volatile("movq $35, %%rax\n\t" // sys_nanosleep
+                         "syscall\n\t"
+                         :
+                         : "D"(&req), "S"(0)
+                         : "rax", "rcx", "r11", "memory");
+}
+
+void window_length(int *width, int *height) {
+        struct winsize {
+                unsigned short ws_row;
+                unsigned short ws_col;
+                unsigned short ws_xpix;
+                unsigned short ws_ypix;
+        };
+        struct winsize ws = {0};
+        const int TIOCGWINSZ = 0x5413;
+
+        __asm__ volatile("movq $16, %%rax\n\t" // sys_ioctl
+                         "movq $1,  %%rdi\n\t"
+                         "movl %1, %%esi\n\t"
+                         "movq %0, %%rdx\n\t"
+                         "syscall\n\t"
+                         :
+                         : "r"(&ws), "r"(TIOCGWINSZ)
+                         : "rax", "rdi", "rsi", "rdx", "r11", "rcx", "memory");
+
+        *width = (int)ws.ws_col;
+        *height = (int)ws.ws_row;
+}
+
+void draw(int screen_width, int screen_height) {
+        //  e.g., Col - Board_Weidth       ;     Row - Board_height
+        int board_Weidth = 11;
+        int board_Height = 5;
+        int x = screen_width;
+        int y = screen_height;
+
+        // Calculation [Test]
+        // __asm__ volatile(
+        // Move [1] bit to the right and /2
+        //   "movl, %%eax, %[col_output]\n\t"
+        // );
+
+        // col_output; (col = bw - col / 2) <- c version ()
+        // TODO Optimize this shit later when i have time.
+        __asm__ volatile("subl %[bw], %[x_val]\n\t"
+                         "sarl $1, %[x_val]\n\t"
+                         "subl %[bh], %[y_val]\n\t"
+                         "sarl $1, %[y_val]\n\t"
+                         : [x_val] "+r"(x), [y_val] "+r"(y)
+                         : [bw] "rm"(board_Weidth), [bh] "rm"(board_Height));
+        _p_str("Start Col(X): ", 14);
+        _p_int(x);
+        _p_str("Start Row(Y): ", 14);
+        _p_int(y);
+}
+
+void center_cursor(int screen_width, int screen_height, int map_row,
+                   int map_col, int current_row) {
+
+        int start_y = (screen_height - map_row) / 2;
+        int start_x = (screen_width - map_col) / 2;
+
+        int target_row = start_y + current_row;
+        int target_col = start_x;
+
+        _p_str("\033[", 2);
+        _p_int_raw(target_row);
+        _p_str(";", 1);
+        _p_int_raw(target_col);
+        _p_str("H", 1);
+}
+
+void move_cursor(int row, int col) {
+        _p_str("\033[", 2);
+        _p_int_raw(row);
+        _p_str(";", 1);
+        _p_int_raw(col);
+        _p_str("H", 1);
+}
+
+void raw_mode(void) {
+#define NCCS 19
+#define VMIN 4
+#define VTIME 5
+        struct tty {
+                unsigned int c_iflag;  			   		/* input modes */
+                unsigned int c_oflag;     				/* output modes */
+                unsigned int c_cflag;     				/* control modes */
+                unsigned int c_lflag;     				/* local modes */
+                unsigned char c_cc[NCCS];		 		/* special characters */
+        };
+
+        struct tty m_tty; 						// Creates tty as m_tty
+        int *ptr = (int *)&m_tty;					// Pointing to m_tty -> tty
+
+
+        const int TCGETS = 0x5401;					// Sets TCGETS address as a constant
+        const int TCSET = 0x5402; 					// Sets TCSETS address as a constant 
+	
+	// TODO
+	// 1. Get sys_ioctl & FD
+	// 2. Set TCGET to rdx
+	// 3. Set the pointer to rcx 
+		
+	__asm__ volatile("movq $16,%%rax\n\t" 				// Request the kernel for Ioctl
+			 "movq $1,%%rdi\n\t" 		
+			 "movl %0,%%esi\n\t"				// Get TCGETS that is defined (0x5401)
+			 "movq %1,%%rdx\n\t"				// Points the pointer to m_tty which will point to 'tty'
+			 "syscall\n\t" 
+			 : 
+			 :"r"(TCGETS), "r"(ptr)
+			 :"rax", "rsi", "esi", "rdx", "r8", "r11", "rcx", "memory"); 
+
+        m_tty.c_cc[VMIN] = 1;
+        m_tty.c_cc[VTIME] = 0;
+	
+	__asm__ volatile("movq $16, %%rax\n\t"
+			 "movq $1, %%rdi\n\t"
+		         "movl %0, %%esi\n\t"
+			 "movq %1, %%rdx\n\t"
+			 "syscall\n\t"
+			 :
+			 :"r"(TCSET), "r"(ptr)
+			 :"rax", "rdi", "rsi", "rdx", "r11", "rcx", "memory");
+			
+        
+}
+
+void draw_map(int term_w, int term_h) {
+        int row = 30;			//Define the height
+        int col = 70; 			// Define the wedith
+
+
+        for (int i = 0; i < row; i++) { 						//Inner loop for height
+                center_cursor(term_w, term_h, row, col, i);
+                for (int j = 0; j < col; j++) { // outer 				// Outer loop for width
+                        if (i == 0 || i == row - 1 || j == 0 || j == col - 1) {
+                                _p_str("#", 1);
+                        } else {
+                                _p_str(" ", 1);
+                        }
+                }
+
+                _p_str("\n", 1);
+        }
+        move_cursor(term_h / 2, term_w / 2); 				   		// Centers the cursor by deviding
+}
+
+
+void Player(int screen_width, int screen_height) {
+        //	    TODO
+        // 1. The player will be "@"
+        // 2. And center it using the <helper move_cursor + center_cursor>
+        // 3. Add input, make the player be able to input the player
+        char Input_Buffer[1];							// Create a Input buffer to store ASCI
+        static int pos_x = 0;							// Set the position 
+        static int pos_y = 0;							// Set the position
+       
+	 if (pos_x == 0 && pos_y == 0) { 					// Checks if the positon
+                pos_x = screen_width / 2;					// Ceneters the x
+                pos_y = screen_height / 2;					// Centers the  y
+        }
+        move_cursor(pos_y, pos_x);						// Ceneters the cursor
+        _p_str("@", 1);								// Creates the player
+        __asm__ volatile("movq $0, %%rax\n\t"					// Gets sys_read to read to the user input 
+                         "movq $0, %%rdi\n\t"		
+                         "syscall\n\t"
+                         :
+                         : "S"(Input_Buffer), "d"(1)
+                         : "rax", "rdi", "rcx", "r11", "memory");
+	// Basic checks
+        if (Input_Buffer[0] == 'w' || Input_Buffer[0] == 'W') {
+                pos_y--;
+        } else if (Input_Buffer[0] == 's' || Input_Buffer[0] == 'S') {
+                pos_y++;
+        } else if (Input_Buffer[0] == 'a' || Input_Buffer[0] == 'A') {
+                pos_x--;
+        } else if (Input_Buffer[0] == 'd' || Input_Buffer[0] == 'D') {
+                pos_x++;
+        }
+}
+
+/*			TESTING BULL SHIT: 		*/
+
+/*
+// Me testing stuff
+void print(void) {
+char t[] = "T";
+unsigned long x = sizeof(t) - 1;
+
+    __asm__ volatile("movq $1, %%rax\n\t"
+                     "movq $1, %%rdi\n\t"
+                     "syscall\n\t"
+                     :
+                     : "S"(t), "d"(x)
+                     : "rax", "rdi", "rcx", "r11", "memory");
+}
+*/
+
+// EXAMPLE FOR ME: Don't read.
+//  void Test(void){
+//      int x = 2;
+//    __asm__ volatile(
+//      "movq $1, %%rdx \n\t"
+//      "movq $1, %%rdi \n\t"
+//      "movq %0, %%rsi \n\t"
+//      "syscall\n\t"
+//      :
+//      :"r"(&x)
+//      :"rdx", "rdi", "esi", "rcx", "memory"
+//    );
+//  }
+
+int main(void) {
+        int w, h;
+        int last_w = -1, last_h = -1;
+        clear_terminal(); // Clears the terminal
+        int running = 1;
+        window_length(&w, &h); // Displays the dimensions
+        while (running) {
+                window_length(&w, &h);
+                if (w != last_w || h != last_h) {
+                        clear_terminal();
+                        draw(w, h);
+
+                        last_w = w;
+                        last_h = h;
+                }
+                draw_map(w, h);
+                Player(w, h);
+                nano_sleep(16);
+        }
+
+        restore_terminal();
+        return 0;
+}
