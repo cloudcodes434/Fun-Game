@@ -5,18 +5,18 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-void _p_str(const char *s, int len) {
+void _p_str(const char *s, long len) {
         if (len <= 0 || !s)
                 return;
         __asm__ volatile("movq  $1, %%rax\n\t"
                          "movq  $1, %%rdi\n\t"
                          "syscall\n\t"
                          :
-                         : "S"(s), "d"((long)len)
+                         : "S"(s), "d"(len)
                          : "rax", "rdi", "rcx", "r11", "memory");
 }
 
-void _p_int(int val) {
+void _p_int(long val) {
         char buf[20];
         char *p = &buf[19];
         *p = '\n';
@@ -38,7 +38,7 @@ void _p_int(int val) {
         }
 }
 
-void _p_int_raw(int val) {
+void _p_int_raw(long val) {
         char buf[20];
         char *p = &buf[19];
 
